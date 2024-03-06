@@ -1,0 +1,584 @@
+****CHAT APPP step by step*********
+-----------------------------------
+appwriteConfig
+-----------------------------------
+// Importowanie potrzebnych modułów z biblioteki "appwrite"
+import { Client, Databases, Account } from "appwrite";
+
+// Deklaracja stałych przechowujących identyfikatory projektu, bazy danych i kolekcji
+export const PROJECT_ID = import.meta.env.VITE_PROJECT_ID;
+export const DB_ID = import.meta.env.VITE_DB_ID;
+export const COLLECTION_ID_MESSAGES = import.meta.env.VITE_COLLECTION_ID_MESSAGES;
+
+// Inicjalizacja nowej instancji klienta "Client" z biblioteki "appwrite"
+const client = new Client();
+
+// Konfiguracja endpointu klienta na adres URL usługi Appwrite
+client
+  .setEndpoint("https://cloud.appwrite.io/v1")
+  // Ustawienie identyfikatora projektu dla klienta
+  .setProject(PROJECT_ID);
+
+// Inicjalizacja nowych instancji obiektów Databases i Account z wykorzystaniem wcześniej utworzonego klienta
+export const databases = new Databases(client);
+export const account = new Account(client);
+
+// Eksportowanie klienta jako domyślnej wartości, aby był dostępny w innych plikach
+export default client;
+
+-----------------------------------
+AUTH CONTEXT
+-----------------------------------
+
+// Importowanie potrzebnych modułów z biblioteki React oraz innych zewnętrznych
+import { createContext, useState, useEffect, useContext } from "react";
+import { account } from "../appwriteConfig";
+import { useNavigate } from "react-router-dom";
+import { ID } from "appwrite";
+
+// Tworzenie kontekstu autoryzacji
+const AuthContext = createContext();
+
+// Komponent dostarczający kontekst autoryzacji
+export const AuthProvider = ({ children }) => {
+  // Stan przechowujący informację o stanie ładowania
+  const [loading, setLoading] = useState(true);
+  // Stan przechowujący informacje o aktualnie zalogowanym użytkowniku
+  const [user, setUser] = useState(null);
+  // Hook używany do nawigacji w aplikacji
+  const navigate = useNavigate();
+
+  // Efekt pobierający dane użytkownika przy ładowaniu komponentu
+  useEffect(() => {
+    getUserOnLoad();
+  }, []);
+
+  // Funkcja asynchroniczna pobierająca dane użytkownika
+  const getUserOnLoad = async () => {
+    try {
+      const accountDetails = await account.get();
+      console.log("accountDetails", accountDetails);
+      setUser(accountDetails);
+    } catch (error) {
+      console.info(error);
+    }
+    setLoading(false);
+  };
+
+  // Funkcja obsługująca proces logowania użytkownika
+  const handleUserLogin = async (e, credentials) => {
+    e.preventDefault();
+    console.log("CREDS auth context:", credentials);
+    try {
+      const response = await account.createEmailSession(
+        credentials.email,
+        credentials.password
+      );
+      console.log("loggedin:", response);
+      const accountDetails = await account.get();
+
+      setUser(accountDetails);
+      navigate("/");
+      console.log("You are in");
+    } catch (error) {
+      console.log(error);
+    }
+  };
+
+  // Funkcja obsługująca proces wylogowywania użytkownika
+  const hanldeUserLogout = async () => {
+    await account.deleteSession("current");
+    setUser(null);
+  };
+
+  // Funkcja obsługująca proces rejestracji użytkownika
+  const handleUserRegister = async (e, credentials) => {
+    e.preventDefault();
+    console.log("Handle Register triggered!", credentials);
+
+    if (credentials.password1 !== credentials.password2) {
+      alert("Passwords did not match!");
+      return;
+    }
+
+    try {
+      let response = await account.create(
+        ID.unique(),
+        credentials.email,
+        credentials.password1,
+        credentials.name
+      );
+      console.log("User registered!", response);
+
+      await account.createEmailSession(
+        credentials.email,
+        credentials.password1
+      );
+      let accountDetails = await account.get();
+      setUser(accountDetails);
+      navigate("/");
+    } catch (error) {
+      console.error(error);
+    }
+  };
+
+  // Obiekt zawierający dane kontekstu
+  const contextData = {
+    user,
+    handleUserLogin,
+    hanldeUserLogout,
+    handleUserRegister,
+  };
+  // Renderowanie dostawcy kontekstu wraz z zawartością
+  return (
+    <AuthContext.Provider value={contextData}>
+      {loading ? <p>Loading</p> : children}
+    </AuthContext.Provider>
+  );
+};
+
+// Funkcja dostępu do kontekstu autoryzacji
+export const userAuth = () => {
+  return useContext(AuthContext);
+};
+// Eksportowanie domyślnego kontekstu autoryzacji
+export default AuthContext;
+
+-----------------------------------
+PAGES ROOMS
+-----------------------------------
+
+// Importowanie potrzebnych modułów z bibliotek React oraz innych modułów
+import { useState, useEffect } from "react";
+import client, {
+  databases,
+  DB_ID,
+  COLLECTION_ID_MESSAGES,
+} from "../appwriteConfig";
+import { ID, Permission, Query, Role } from "appwrite";
+import { Trash2 } from "react-feather";
+import Header from "../components/Header";
+import { userAuth } from "../utils/AuthContext";
+
+// Komponent Rooms
+const Rooms = () => {
+  // Deklaracja stanów komponentu za pomocą hooków useState
+  const [messageBody, setMessageBody] = useState("");
+  const [messages, setMessages] = useState([]);
+  const { user } = userAuth();
+
+  // Efekt pobierający wiadomości przy montowaniu komponentu
+  useEffect(() => {
+    getMessages();
+
+    // Subskrypcja na zmiany w bazie danych
+    const unsubscribe = client.subscribe(
+      `databases.${DB_ID}.collections.${COLLECTION_ID_MESSAGES}.documents`,
+      (response) => {
+        if (
+          response.events.includes(
+            "databases.*.collections.*.documents.*.create"
+          )
+        ) {
+          console.log("A MESSAGE WAS CREATED");
+          setMessages((prevState) => [response.payload, ...prevState]);
+        }
+
+        if (
+          response.events.includes(
+            "databases.*.collections.*.documents.*.delete"
+          )
+        ) {
+          console.log("A MESSAGE WAS DELETED!!!");
+          setMessages((prevState) =>
+            prevState.filter((message) => message.$id !== response.payload.$id)
+          );
+        }
+      }
+    );
+
+    console.log("unsubscribe:", unsubscribe);
+
+    // Funkcja czyszcząca subskrypcję przy odmontowywaniu komponentu
+    return () => {
+      unsubscribe();
+    };
+  }, []);
+
+  // Funkcja pobierająca wiadomości z bazy danych
+  const getMessages = async () => {
+    const response = await databases.listDocuments(
+      DB_ID,
+      COLLECTION_ID_MESSAGES,
+      [Query.orderDesc("$createdAt"), Query.limit(100)]
+    );
+    console.log(response.documents);
+    setMessages(response.documents);
+  };
+
+  // Funkcja obsługująca dodawanie wiadomości
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    console.log("MESSAGE:", messageBody);
+
+    const permissions = [Permission.write(Role.user(user.$id))];
+
+    const payload = {
+      user_id: user.$id,
+      username: user.name,
+      body: messageBody,
+    };
+
+    const response = await databases.createDocument(
+      DB_ID,
+      COLLECTION_ID_MESSAGES,
+      ID.unique(),
+      payload,
+      permissions
+    );
+
+    console.log("RESPONSE:", response);
+
+    setMessageBody("");
+  };
+
+  // Funkcja obsługująca usuwanie wiadomości
+  const deleteMessage = async (id) => {
+    await databases.deleteDocument(DB_ID, COLLECTION_ID_MESSAGES, id);
+  };
+
+  // Renderowanie komponentu Rooms
+  return (
+    <main className="container">
+      <Header />
+      <div className="room--container">
+        <form id="message--form" onSubmit={handleSubmit}>
+          <div>
+            <textarea
+              required
+              maxLength="250"
+              placeholder="Say something..."
+              onChange={(e) => {
+                setMessageBody(e.target.value);
+              }}
+              value={messageBody}
+            ></textarea>
+          </div>
+
+          <div className="send-btn--wrapper">
+            <input className="btn btn--secondary" type="submit" value="send" />
+          </div>
+        </form>
+
+        <div>
+          {/* Mapowanie wiadomości i ich wyświetlanie */}
+          {messages.map((message) => (
+            <div key={message.$id} className={"message--wrapper"}>
+              <div className="message--header">
+                <p>
+                  {message?.username ? (
+                    <span> {message?.username}</span>
+                  ) : (
+                    "Anonymous user"
+                  )}
+
+                  <small className="message-timestamp">
+                    {new Date(message.$createdAt).toLocaleString()}
+                  </small>
+                </p>
+
+                {/* Wyświetlanie przycisku usuwania wiadomości */}
+                {message.$permissions.includes(
+                  `delete("user:${user.$id}")`
+                ) && (
+                  <Trash2
+                    className="delete--btn"
+                    onClick={() => {
+                      deleteMessage(message.$id);
+                    }}
+                  />
+                )}
+              </div>
+
+              {/* Wyświetlanie treści wiadomości */}
+              <div
+                className={
+                  "message--body" +
+                  (message.user_id === user.$id ? " message--body--owner" : "")
+                }
+              >
+                <span>{message.body}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </main>
+  );
+};
+
+// Eksportowanie komponentu Rooms jako domyślnej wartości
+export default Rooms;
+
+
+
+-----------------------------------
+PAGES LOGIN PAGE
+-----------------------------------
+
+// Importowanie potrzebnych modułów z biblioteki React oraz funkcji i komponentów pomocniczych
+import { useEffect, useState } from "react";
+import { userAuth } from "../utils/AuthContext"; // Importowanie kontekstu autoryzacji użytkownika
+import { useNavigate, Link } from "react-router-dom"; // Importowanie hooka do nawigacji oraz komponentu Link
+
+// Komponent LoginPage
+const LoginPage = () => {
+  // Deklaracja stanów komponentu
+  const { user, handleUserLogin } = userAuth(); // Destrukturyzacja funkcji i stanu z kontekstu autoryzacji użytkownika
+  const navigate = useNavigate(); // Przypisanie hooka do nawigacji do zmiennej navigate
+  const [credentials, setCredentials] = useState({ // Inicjalizacja stanu przechowującego dane logowania
+    email: "",
+    password: "",
+  });
+
+  // Efekt sprawdzający, czy użytkownik jest już zalogowany
+  useEffect(() => {
+    if (user) {
+      navigate("/"); // Przekierowanie użytkownika na stronę główną, jeśli jest już zalogowany
+    }
+  });
+
+  // Funkcja obsługująca zmianę danych logowania
+  const handleInputChange = (e) => {
+    let name = e.target.name;
+    let value = e.target.value;
+
+    setCredentials({ ...credentials, [name]: value }); // Aktualizacja stanu danych logowania po zmianie
+    console.log("CREDS:", credentials);
+  };
+
+  // Zwracanie JSX
+  return (
+    <div className="auth--container">
+      <div className="form--wrapper">
+        <form
+          onSubmit={(e) => {
+            handleUserLogin(e, credentials); // Wywołanie funkcji obsługującej logowanie użytkownika po przesłaniu formularza
+          }}
+        >
+          <div className="field--wrapper">
+            <label>Email:</label>
+            <input
+              required
+              type="email"
+              name="email"
+              placeholder="Enter your email..."
+              value={credentials.email}
+              onChange={(e) => {
+                handleInputChange(e); // Wywołanie funkcji obsługującej zmianę danych logowania po zmianie w polu email
+              }}
+            />
+          </div>
+
+          <div className="field--wrapper">
+            <label>Password:</label>
+            <input
+              required
+              type="password"
+              name="password"
+              placeholder="Enter password..."
+              value={credentials.password}
+              onChange={(e) => {
+                handleInputChange(e); // Wywołanie funkcji obsługującej zmianę danych logowania po zmianie w polu hasła
+              }}
+            />
+          </div>
+
+          <div className="field--wrapper">
+            <input
+              type="submit"
+              value="Login"
+              className="btn btn--lg btn--main"
+            />
+          </div>
+        </form>
+        <p>
+          Do not have an account? Register <Link to="/register">here</Link> {/* Renderowanie linku do strony rejestracji */}
+        </p>
+      </div>
+    </div>
+  );
+};
+
+export default LoginPage; // Eksportowanie komponentu LoginPage
+
+-----------------------------------
+PAGES REGISTER PAGE
+-----------------------------------
+
+// Importowanie potrzebnych modułów z biblioteki React oraz funkcji i komponentów pomocniczych
+import { useState } from "react";
+import { userAuth } from "../utils/AuthContext"; // Importowanie kontekstu autoryzacji użytkownika
+import { Link } from "react-router-dom"; // Importowanie komponentu Link do nawigacji
+
+// Komponent RegisterPage
+const RegisterPage = () => {
+  // Deklaracja stanu komponentu przechowującego dane rejestracji
+  const [credentials, setCredentials] = useState({
+    name: "",
+    email: "",
+    password1: "",
+    password2: "",
+  });
+
+  // Destrukturyzacja funkcji obsługującej rejestrację z kontekstu autoryzacji użytkownika
+  const { handleUserRegister } = userAuth();
+
+  // Funkcja obsługująca zmianę danych rejestracji
+  const handleInputChange = (e) => {
+    let name = e.target.name;
+    let value = e.target.value;
+
+    setCredentials({ ...credentials, [name]: value }); // Aktualizacja stanu danych rejestracji po zmianie
+  };
+
+  // Zwracanie JSX
+  return (
+    <div className="auth--container">
+      <div className="form--wrapper">
+        <form
+          onSubmit={(e) => {
+            handleUserRegister(e, credentials); // Wywołanie funkcji obsługującej rejestrację użytkownika po przesłaniu formularza
+          }}
+        >
+          <div className="field--wrapper">
+            <label>Name:</label>
+            <input
+              required
+              type="text"
+              name="name"
+              value={credentials.name}
+              placeholder="Enter your name..."
+              onChange={(e) => {
+                handleInputChange(e); // Wywołanie funkcji obsługującej zmianę danych rejestracji po zmianie w polu name
+              }}
+            />
+          </div>
+
+          <div className="field--wrapper">
+            <label>Email:</label>
+            <input
+              required
+              type="email"
+              name="email"
+              placeholder="Enter your email..."
+              value={credentials.email}
+              onChange={(e) => {
+                handleInputChange(e); // Wywołanie funkcji obsługującej zmianę danych rejestracji po zmianie w polu email
+              }}
+            />
+          </div>
+
+          <div className="field--wrapper">
+            <label>Password:</label>
+            <input
+              required
+              type="password"
+              name="password1"
+              placeholder="Enter a password..."
+              value={credentials.password1}
+              onChange={(e) => {
+                handleInputChange(e); // Wywołanie funkcji obsługującej zmianę danych rejestracji po zmianie w polu password1
+              }}
+            />
+          </div>
+
+          <div className="field--wrapper">
+            <label>Confirm password:</label>
+            <input
+              required
+              type="password"
+              name="password2"
+              placeholder="Confirm your password..."
+              value={credentials.password2}
+              onChange={(e) => {
+                handleInputChange(e); // Wywołanie funkcji obsługującej zmianę danych rejestracji po zmianie w polu password2
+              }}
+            />
+          </div>
+
+          <div className="field--wrapper">
+            <input
+              className="btn btn--lg btn--main"
+              type="submit"
+              value="Register"
+            />
+          </div>
+        </form>
+
+        <p>
+          Already have an account? Login <Link to="/login">here</Link> {/* Renderowanie linku do strony logowania */}
+        </p>
+      </div>
+    </div>
+  );
+};
+
+export default RegisterPage; // Eksportowanie komponentu RegisterPage
+
+-----------------------------------
+COMPONENTS HEADER
+-----------------------------------
+
+// Importowanie potrzebnych modułów z biblioteki React oraz funkcji i komponentów pomocniczych
+import { userAuth } from "../utils/AuthContext"; // Importowanie kontekstu autoryzacji użytkownika
+import { LogOut } from "react-feather"; // Importowanie ikony wylogowania
+
+// Komponent Header
+const Header = () => {
+  // Destrukturyzacja stanu użytkownika i funkcji obsługującej wylogowanie z kontekstu autoryzacji
+  const { user, handleUserLogout } = userAuth();
+
+  // Zwracanie JSX
+  return (
+    <div id="header--wrapper">
+      {user ? ( // Warunek sprawdzający, czy użytkownik jest zalogowany
+        <> {/* Fragment JSX */}
+          Welcome {user.name} {/* Wyświetlanie powitania z nazwą użytkownika */}
+          <LogOut className="header--link" onClick={handleUserLogout} /> {/* Renderowanie ikony wylogowania z obsługą kliknięcia */}
+        </>
+      ) : (
+        <> {/* Fragment JSX */}
+          <button>Login</button> {/* Renderowanie przycisku do logowania */}
+        </>
+      )}
+    </div>
+  );
+};
+
+export default Header; // Eksportowanie komponentu Header
+-----------------------------------
+COMPONENTS PRIVATE ROUTES
+-----------------------------------
+Kod, który podałeś, definiuje komponent PrivateRoutes, który jest odpowiedzialny za kontrolę dostępu do prywatnych tras. Jeśli użytkownik jest zalogowany, wyświetla komponenty podrzędne (czyli wszystkie trasy wewnętrzne). Jeśli użytkownik nie jest zalogowany, przekierowuje go do strony logowania.
+
+Oto analiza kroku po kroku:
+
+Importowanie niezbędnych modułów:
+
+Outlet i Navigate z biblioteki react-router-dom do zarządzania trasami.
+userAuth z pliku AuthContext w celu uzyskania informacji o zalogowanym użytkowniku.
+Deklaracja komponentu PrivateRoutes:
+
+const PrivateRoutes = () => {
+  const { user } = userAuth(); // Pobranie stanu zalogowanego użytkownika z kontekstu autoryzacji.
+  return <div>{user ? <Outlet /> : <Navigate to="/login" />}</div>; // Renderowanie komponentu Outlet zagnieżdżonych tras prywatnych, jeśli użytkownik jest zalogowany, w przeciwnym razie przekierowanie do strony logowania.
+};
+Zwracanie JSX:
+
+Warunek sprawdzający, czy użytkownik jest zalogowany.
+Jeśli użytkownik jest zalogowany (user istnieje), zwracany jest <Outlet />, co oznacza, że renderowane są komponenty podrzędne (wszystkie trasy wewnętrzne).
+Jeśli użytkownik nie jest zalogowany (user nie istnieje), zwracane jest <Navigate to="/login" />, co oznacza przekierowanie użytkownika do strony logowania.
+Eksportowanie komponentu PrivateRoutes jako domyślnej wartości, aby był dostępny w innych plikach.
+
+Ten komponent jest używany w aplikacji do zabezpieczenia tras, które wymagają autoryzacji użytkownika. Jeśli użytkownik nie jest zalogowany, zostanie przekierowany do strony logowania.
