@@ -17,7 +17,6 @@ export const AuthProvider = ({ children }) => {
   const getUserOnLoad = async () => {
     try {
       const accountDetails = await account.get();
-      console.log("accountDetails", accountDetails);
       setUser(accountDetails);
     } catch (error) {
       console.info(error);
@@ -27,7 +26,6 @@ export const AuthProvider = ({ children }) => {
 
   const handleUserLogin = async (e, credentials) => {
     e.preventDefault();
-    console.log("CREDS auth context:", credentials);
     try {
       const response = await account.createEmailSession(
         credentials.email,
@@ -51,7 +49,7 @@ export const AuthProvider = ({ children }) => {
 
   const handleUserRegister = async (e, credentials) => {
     e.preventDefault();
-    console.log("Handle Register triggered!", credentials);
+    console.log("Handle Register triggered!");
 
     if (credentials.password1 !== credentials.password2) {
       alert("Passwords did not match!");
