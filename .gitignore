@@ -1,8 +1,8 @@
 #my own
-stepByStepChatApp&
-.env
+stepByStepChatApp.txt
 
 # Logs
+.env
 logs
 *.log
 npm-debug.log*

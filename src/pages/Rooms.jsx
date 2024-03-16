@@ -16,9 +16,9 @@ const Rooms = () => {
 
   useEffect(() => {
     getMessages();
-
     const unsubscribe = client.subscribe(
       `databases.${DB_ID}.collections.${COLLECTION_ID_MESSAGES}.documents`,
+
       (response) => {
         if (
           response.events.includes(
@@ -55,7 +55,7 @@ const Rooms = () => {
       COLLECTION_ID_MESSAGES,
       [Query.orderDesc("$createdAt"), Query.limit(100)]
     );
-    console.log(response.documents);
+    console.log("response documents", response.documents);
     setMessages(response.documents);
   };
 
